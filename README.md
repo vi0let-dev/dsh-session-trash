@@ -35,32 +35,35 @@ Harness 官方的「归档」只把会话移出侧栏，磁盘上的日志会一
 
 侧栏 → **插件** → **添加插件**，把下面任意一种填进输入框，点 **安装**：
 
-| 输入框里填什么 | 例子 | 前提 |
+| 输入框里填什么 | 例子 | 说明 |
 | --- | --- | --- |
-| **包名** | `dsh-session-trash` | 该包已发布到 npm（或你配置的镜像源） |
-| **GitHub 仓库地址** | `github:vi0let-dev/dsh-session-trash` | 只要有仓库就能装，不需要发布 npm |
-| **本地目录路径** | `D:\src\dsh-session-trash` | 目录里就是本仓库的内容 |
-| **压缩包** | `D:\downloads\dsh-session-trash-1.0.0.tgz` | `npm pack` 的产物 |
+| **GitHub 仓库地址** | `github:vi0let-dev/dsh-session-trash` | **推荐**。pnpm 会把仓库下载成 profile 里的一份副本，之后本地没有这个文件夹也能用 |
+| **GitHub 地址 + 版本** | `github:vi0let-dev/dsh-session-trash#v1.0.1` | 锁定到某个 tag 或 commit，避免跟随 `main` 变化 |
+| **本地目录路径** | `D:\src\dsh-session-trash` | 适合自己改代码调试：装的是**软链**，改完直接生效，但别删/挪那个目录 |
+| **压缩包** | `D:\downloads\dsh-session-trash-1.0.1.tgz` | 本仓库 `npm pack` 出的 tgz，装成副本；自己打包用，与发布无关 |
+
+> 本插件**没有发布到 npm**，所以「包名安装」（直接填 `dsh-session-trash`）不可用——
+> 请用上面的 GitHub 地址或本地路径。
 
 对话框里那段「插件安装引导和示例」说的就是这个格式（`dsh plugin add` 后面的那一段）。
 
 安装完成后对话框会给出 **「立即启用」**：点它会启用这个组合包、关闭对话框并把列表滚动到它；
 直接关掉则它保持「已安装但未启用」。启用后重启 DSH 即可。
 
-> 想锁定版本更稳：Git 地址可以带 commit，例如 `github:vi0let-dev/dsh-session-trash#<commit-sha>`。
-
 ### 方式二：命令行
 
 ```powershell
-# GitHub 直装（推荐）
+# GitHub 直装（推荐）：装到 profile 自己的 node_modules，不依赖本地文件夹
 dsh plugin --profile desktop add github:vi0let-dev/dsh-session-trash
 
-# 本地目录
-dsh plugin --profile desktop add "D:\src\dsh-session-trash"
+# 锁定版本（tag 或 commit）
+dsh plugin --profile desktop add github:vi0let-dev/dsh-session-trash#v1.0.1
 
-# npm 包
-dsh plugin --profile desktop add dsh-session-trash
+# 本地目录：装成软链，改代码立即生效（适合开发）
+dsh plugin --profile desktop add "D:\src\dsh-session-trash"
 ```
+
+**没有 npm 包名安装这一条**——本插件不发布 npm，`dsh plugin add dsh-session-trash` 会去 registry 找包而失败。
 
 `--profile` 填你实际在用的那个：桌面端默认 `desktop`，`dsh web` 是 `web`。
 
@@ -79,12 +82,18 @@ dsh plugin --profile desktop add dsh-session-trash
     }
   },
   "dependencies": {
-    "dsh-session-trash": "file:D:/src/dsh-session-trash"
+    // GitHub 直装是这份 spec；装本地目录时会是 "link:D:/src/dsh-session-trash"
+    "dsh-session-trash": "github:vi0let-dev/dsh-session-trash"
   }
 }
 ```
 
 `dsh plugin add` 与插件页的「立即启用」都会自动写入这一行；万一没写，手动补上即可。
+
+> ⚠️ 两种装法的差别值得记一下：**GitHub 直装是副本**（换了代码要重新 add 一次才生效），
+> **本地目录是软链**（指向你的工作副本）。用软链时千万不要用 `Remove-Item -Recurse` 之类的命令去删
+> profile 里的 `node_modules\dsh-session-trash`——那可能顺着链接删到你项目里的东西；要摘链接用
+> `cmd /c rmdir "<profile>\node_modules\dsh-session-trash"`。
 
 ### 装完没出现入口？
 
