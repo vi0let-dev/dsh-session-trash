@@ -1,0 +1,2 @@
+# Keep the committed bytes identical on every platform (these are JS/YAML/Markdown sources).
+* text=auto eol=lf
