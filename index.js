@@ -29,7 +29,7 @@ import path from 'node:path'
 export const name = 'dsh-session-trash'
 
 /**
- * 唯一硬需求是不存在的：没有 webServer 时路由不挂载（浏览器半身显示一个错误），
+ * 唯一硬需求是不存在的：没有 webServer 时路由不挂载（浏览器侧显示一个错误），
  * 没有 workspaceRegistry / sessionPersistence 时退化为纯文件系统模式。
  * 因此这里不 inject 任何东西——组合缺什么就少一个能力，而不是整个插件不激活。
  */
@@ -403,7 +403,7 @@ function optional(service, name) {
  * 把一个 id 从工作区账本（`detachSession`）与归档集合（`unarchiveSession`）里都摘掉，
  * 走官方写路径，不动任何文件。
  *
- * **必须和浏览器半身的 `sessions.refresh()` 配对使用**：只做这一步，浏览器投影会拿缓存里
+ * **必须和浏览器侧的 `sessions.refresh()` 配对使用**：只做这一步，浏览器投影会拿缓存里
  * 那条已经没有数据的行重画一次，于是侧栏「未分组」下冒出一行、或在工作区里以「已归档」
  * 的样子挂一行，都要等到下次刷新才消失。删完立刻让外壳重新拉一次会话清单（见 client.js
  * 的 refreshShell），那一行才会真正消失。
@@ -713,7 +713,7 @@ async function restoreSession({ store, service, id }) {
  *   1. 删文件（回收站目录 + 登记）；
  *   2. 从工作区账本与归档集合里摘掉这个 id；
  *   3. 如果它在宿主会话表里还活着，把它从表里摘掉——这一步是「重启才消失」的那个残留的解药。
- * 之后浏览器半身会调 `sessions.refresh()` 重新拉一次清单。
+ * 之后浏览器侧会调 `sessions.refresh()` 重新拉一次清单。
  */
 async function purgeSession({ store, service, id, logger, waterfall }) {
   const entries = await store.trashEntries()

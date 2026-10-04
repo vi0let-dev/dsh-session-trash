@@ -77,7 +77,7 @@ dsh plugin --profile desktop add "D:\src\dsh-session-trash"
       "bundles": [
         "@deepseek-ai/dsh-base",
         "@deepseek-ai/dsh-web-app",
-        "dsh-session-trash"        // ← 必须在这一行，否则 Host 半身不会被加载
+        "dsh-session-trash"        // ← 必须在这一行，否则 Host 侧不会被加载
       ]
     }
   },
@@ -141,7 +141,7 @@ dsh plugin --profile desktop add "D:\src\dsh-session-trash"
 会一直留在宿主会话表里，`session.list` 一直报它，而它的工作区归属已经被摘掉——于是它稳稳地落在
 「未分组」下。实测：**刷新页面没用**（客户端重连之后宿主照样报它），只有重启宿主才释放。这就是第 2 步。
 
-万一第 2 步失败（例如未来 DSH 换了会话表服务名），浏览器半身的探针会发现它还赖着，页面会显示一条
+万一第 2 步失败（例如未来 DSH 换了会话表服务名），浏览器侧的探针会发现它还赖着，页面会显示一条
 提示和一个 **「刷新界面」**按钮作为兜底；正常情况下不需要它。
 
 除此之外插件不写任何记账：`GET /list` 是纯读的，**删除**只做归档 + 搬文件，**还原**只做文件归位 +
@@ -178,7 +178,7 @@ node tools/prune-ledger.mjs --apply
   投影缓存**。
 - **列表是纯读的**：`GET /list` 只读磁盘、持久化快照和归档标记，不做任何写入。
 - **写记账只发生在三处**：删除时 `archiveSession`、还原时 `unarchiveSession`、彻底删除（与清空回收站）
-  时 `detachSession` + `unarchiveSession`，并顺带把活会话从宿主会话表里摘掉；之后浏览器半身立刻调
+  时 `detachSession` + `unarchiveSession`，并顺带把活会话从宿主会话表里摘掉；之后浏览器侧立刻调
   `sessions.refresh()`，让外壳重新拉一次清单，避免那条缓存行换个地方冒出来。
 - **运行中的会话拒绝删除**：归档前会问 `workspace/session-activity` 瀑布，有活动就返回 409，
   文件分毫不动。
@@ -194,7 +194,7 @@ node tools/prune-ledger.mjs --apply
 
 ## 隐私
 
-- **零网络**：Host 半身不联网，没有任何遥测、更新检查或上报；浏览器半身只 `fetch` 自己的同源路由
+- **零网络**：Host 侧不联网，没有任何遥测、更新检查或上报；浏览器侧只 `fetch` 自己的同源路由
   `/api/dsh-session-trash/*`。**没有任何数据离开这台机器。**
 - **零依赖**：`package.json` 没有 `dependencies` / `devDependencies`，安装不会带进任何第三方包。
 - **只碰这几处文件**：
@@ -231,22 +231,42 @@ node tools/prune-ledger.mjs --apply
 
 ## 卸载
 
+两种方式，任选其一；卸完**重启 DSH** 生效。
+
+### 方式一：在界面里卸（推荐）
+
+侧栏 → **插件** → 在 **已安装** 分组里找到 `dsh-session-trash` → 点它那一行的 **卸载** →
+在弹出的确认框「卸载「dsh-session-trash」？」里再点一次 **卸载**。
+
+这就是插件页每个已安装组合包右边那个卸载按钮；卸载会把依赖和 `dsh.profile.bundles` 里那一行一起摘掉。
+
+### 方式二：命令行
+
 ```powershell
 dsh plugin --profile desktop remove dsh-session-trash
 ```
 
-再从 profile 的 `dsh.profile.bundles` 里删掉那一行并重启。插件自己不留任何持久状态，
-唯一的痕迹就是 `$DSH_HOME/session-trash/` 这个目录——确认不需要了就删掉它。
+万一 `dsh.profile.bundles` 里还留着 `dsh-session-trash` 那一行，手动删掉再重启。
+
+> 升级也是同一条路：插件页的提示写着「插件安装后暂不支持自动更新，若需升级请先卸载再安装新版」——
+> 所以升级 = 卸载 + 用新 tag 重装（例如 `github:vi0let-dev/dsh-session-trash#v1.0.2`）。
+
+插件自己不留任何持久状态，唯一的痕迹就是 `$DSH_HOME/session-trash/` 这个目录（里面是还没处理的回收站条目）。
+卸载**不会**删掉这个目录：如果里面还有想留的会话，**卸载前**先在界面里点「还原」——卸载后就暂时没有界面能操作它们了；
+确认全都不需要了，直接删掉这个目录即可。
 
 ## 实现
 
-- **Host 半身** `index.js`：在 `/api/dsh-session-trash` 前缀下挂 `GET /list` 与
+插件分两侧（DSH 插件的通用形态）：**Host 侧**跑在宿主进程里，**浏览器侧**跑在页面里；两侧通过插件自己的
+同源 HTTP 路由通信。
+
+- **Host 侧** `index.js`：在 `/api/dsh-session-trash` 前缀下挂 `GET /list` 与
   `POST /delete|/restore|/purge|/empty`。列表合并两个来源——磁盘扫描（`$DSH_HOME/sessions/*/*`）与
   `ctx.sessionPersistence.list()` 快照——标题取投影缓存
   `storages/session_projcache/sessions/<id>.json`（与侧栏显示同源，不需要解压日志）；
   归档标记只用来给行加「已归档」标注。缺哪个服务就退化成对应的弱能力，不会让整个插件不激活。
   列表是纯读的；写操作只有删除时归档、还原时解除归档，以及彻底删除时那三步清理。
-- **浏览器半身** `client.js`：`window.__ModuleLoader__.load({ id, factory })`，向 `settings.section`
+- **浏览器侧** `client.js`：`window.__ModuleLoader__.load({ id, factory })`，向 `settings.section`
   注册一个 `order: 36` 的分区，数据全部走自己的同源路由，因此不依赖客户端会话 store 的内部结构。
   每次动作成功后它会调一次外壳的 `sessions.refresh()`——宿主侧摘掉记账后，必须让投影重新拉一次
   会话清单，那条缓存行才不会换个地方冒出来。
@@ -276,7 +296,7 @@ node test/smoke.mjs
 摘活会话」「HTTP /purge、/empty 确实做完这三步」「/forget 已不存在」「登记文件被改坏时剔除坏条目而不是
 删到别处」等回归场景），再验证插件启动时的路由挂载与**跨站防护**（缺标志头 / 标志头值不对 / 非回环 Host
 / 缺 Host 一律 403，且被挡下的请求确认没有产生副作用；`127.0.0.1`、`localhost`、`[::1]` 各类合法写法放行），
-然后在打桩的 `__ModuleLoader__` + React 垫片下加载浏览器半身，验证注册、导航图标补丁
+然后在打桩的 `__ModuleLoader__` + React 垫片下加载浏览器侧代码，验证注册、导航图标补丁
 （只标记自己那一行、不误伤「通用设置」和侧栏「设置」触发按钮、幂等、CSS 与字形完整）、按工作区分组、
 确认框跟随主题（不出现写死的暗色蒙层）、两种渲染分支（空态 / 有数据），以及**删除确认流程 + 外壳刷新**
 （源码里不存在原生对话框调用；点「删除」不发请求；确认后才 `POST /delete`；取消不发请求；
