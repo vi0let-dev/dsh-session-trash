@@ -1,0 +1,9 @@
+# dsh-session-trash — bundle patch.
+#
+# 一行 insert 挂载 Host 半身（/api/dsh-session-trash 路由）。
+# 浏览器半身由 package.json 的 dsh.client 声明，并绑定在 name 恰为裸包名的这一行上，
+# 因此这一行的 name 必须与包名、以及 client.js 里的 ModuleLoader id 完全一致。
+- insert:
+    - id: session-trash
+      name: 'dsh-session-trash'
+      config: {}

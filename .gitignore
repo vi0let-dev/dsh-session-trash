@@ -1,0 +1,15 @@
+# Dependencies / build products
+node_modules/
+*.tgz
+
+# Local scratch
+*.log
+*.tmp
+.tmp/
+docs/screenshot-local/
+
+# Editors & OS
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
