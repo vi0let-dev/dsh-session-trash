@@ -167,6 +167,31 @@ node tools/prune-ledger.mjs --apply
 - **确认框跟随主题**：蒙层与卡片用外壳自己的主题变量（`--dsw-alias-bg-mask-1` /
   `--dsw-alias-bg-layer-2` / `--dsw-alias-label-primary`），不再写死暗色蒙层——之前那版在浅色主题下
   一弹确认框整个界面像是切进了深色模式。
+- **登记文件当不可信输入**：`$DSH_HOME/session-trash/index.json` 在运行期可能被手工编辑或被其它工具
+  改写，所以每一项都校验——id 必须是会话 id 形状、分组必须是单个路径段、目录必须真的落在回收站目录里；
+  校验不过的条目会被剔除（并从登记里删掉），「还原」的目标路径还会再校验一次必须落在 `sessions/` 内。
+  否则一次「彻底删除」就可能 recursive rm 到别处、一次「还原」就可能把文件写到 `sessions/` 之外。
+
+## 隐私
+
+- **零网络**：Host 半身不联网，没有任何遥测、更新检查或上报；浏览器半身只 `fetch` 自己的同源路由
+  `/api/dsh-session-trash/*`。**没有任何数据离开这台机器。**
+- **零依赖**：`package.json` 没有 `dependencies` / `devDependencies`，安装不会带进任何第三方包。
+- **只碰这几处文件**：
+  - `$DSH_HOME/sessions/<组>/<id>/`（会话日志目录：只用于移动/删除，以及读取目录大小）
+  - `$DSH_HOME/storages/session_projcache/sessions/<id>.json`（标题与 cwd；不与日志正文打交道）
+  - `$DSH_HOME/session-trash/`（本插件自己的回收站与登记）
+  - `storages/workspace.json`（**只经官方 `workspaceRegistry` 服务**读写，不手工编辑文件）
+
+  它**不读会话正文**（拿标题不需要解压日志）、**不碰凭据**（`~/.dsh/.credentials.yaml`）、
+  不碰附件库，也不碰你的项目目录。
+
+  唯一的例外是离线工具 `tools/prune-ledger.mjs`：它需要 DSH **完全退出**后直接读写
+  `storages/workspace.json`（默认 dry-run，写入前自动备份）。
+- **只监听本机**：那条 HTTP 路由对非回环连接一律 403；`GET /list` 返回的会话标题、cwd、id
+  只会给到本机调用者，也就是你自己的界面。
+- **删除是明确的破坏性操作**：删除前二次确认，默认进回收站可还原，只有「彻底删除」不可逆；
+  正在运行或等待交互的会话会被拒绝（409）。
 
 ## 已知限制
 
@@ -232,7 +257,7 @@ node test/smoke.mjs
 确认框跟随主题（不出现写死的暗色蒙层）、两种渲染分支（空态 / 有数据），以及**删除确认流程 + 外壳刷新**
 （源码里不存在原生对话框调用；点「删除」不发请求；确认后才 `POST /delete`；取消不发请求；
 确认后确实调到了 `sessions.refresh()`；彻底删除后若探针仍发现它活着，会给出「刷新界面」按钮）。
-当前 85 项全过（`npm test` 同一条命令）。最后四条专门盯着**发布一致性**：`package.json` 的 `name`、
+当前 92 项全过（`npm test` 同一条命令）。最后四条专门盯着**发布一致性**：`package.json` 的 `name`、
 `cordis.patch.yml` 里那一行的 `name`、`client.js` 的 bundle `id` 三者必须一致，入口/清单/图标必须真实存在，
 `files` 必须覆盖运行期文件，且不能有 `prepare`/`postinstall` 之类的构建钩子（否则 GitHub 直装会被 pnpm
 的 `allowBuilds` 拦下）。改包名时这四条会立刻告诉你漏了哪一处。

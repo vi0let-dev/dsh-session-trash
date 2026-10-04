@@ -374,18 +374,18 @@ check('彻底删除会把还活着的会话从宿主会话表里摘掉', () => {
   assert.deepEqual(liveCalls, [ID_A])
   assert.equal(liveSessions.store.has(ID_A), false, 'session list must stop reporting it')
 })
-check('摘除是幂等的（持有它的 fiber 之后卸载也不会再摘一次）', () => {
-  const again = mod.__internal.forgetLiveSession({ service: liveService, id: ID_A })
+check('摘除是幂等的（持有它的 fiber 之后卸载也不会再摘一次）', async () => {
+  const again = await mod.__internal.forgetLiveSession({ service: liveService, id: ID_A })
   assert.equal(again.liveDropped, false)
   assert.equal(again.liveSupported, true)
   assert.deepEqual(liveCalls, [ID_A], 'no second drop may be recorded')
 })
-check('会话不在表里时什么都不做', () => {
-  const absent = mod.__internal.forgetLiveSession({ service: liveService, id: ID_GHOST })
+check('会话不在表里时什么都不做', async () => {
+  const absent = await mod.__internal.forgetLiveSession({ service: liveService, id: ID_GHOST })
   assert.equal(absent.liveDropped, false)
 })
-check('没有 sessions 服务时安全降级（不抛错，只是摘不了）', () => {
-  const degraded = mod.__internal.forgetLiveSession({ service: () => undefined, id: ID_A })
+check('没有 sessions 服务时安全降级（不抛错，只是摘不了）', async () => {
+  const degraded = await mod.__internal.forgetLiveSession({ service: () => undefined, id: ID_A })
   assert.equal(degraded.liveSupported, false)
   assert.equal(degraded.liveDropped, false)
 })
@@ -973,6 +973,124 @@ check('没有构建步骤（GitHub 直装不会被 allowBuilds 拦下）', () =>
   }
   assert.equal(pkg.private, undefined, 'private:true would block npm publish')
 })
+
+console.log('\n[11] 审计加固 / hardening from the pre-publish audit')
+// 回收站登记文件是 $DSH_HOME 下的普通文件（可能被手工编辑、被其它工具改写、被写坏），
+// 所以它必须当成不可信输入：否则一次「彻底删除」会 recursive rm 到别处，一次「还原」会把
+// 文件搬到 sessions 目录之外。
+const auditHome = await makeHome()
+const auditStore = new SessionStore(auditHome)
+const outsideDir = path.join(auditHome, 'not-the-trash')
+await fsp.mkdir(outsideDir, { recursive: true })
+await fsp.writeFile(path.join(outsideDir, 'precious.txt'), 'must survive', 'utf8')
+const goodEntryDir = path.join(auditHome, 'session-trash', '20260101000000-' + ID_A)
+await fsp.mkdir(path.join(goodEntryDir, 'session'), { recursive: true })
+await fsp.writeFile(path.join(goodEntryDir, 'session', 'session.v4.jsonl.zstd'), 'log', 'utf8')
+await fsp.writeFile(
+  path.join(auditHome, 'session-trash', 'index.json'),
+  JSON.stringify({
+    version: 1,
+    entries: [
+      // 合法条目：应当保留
+      { id: ID_A, dir: goodEntryDir, group: GROUP, cwd: 'C:\\Users\\Test\\project', deletedAt: Date.now() },
+      // dir 指向回收站之外 → 会让「彻底删除」删掉无关目录
+      { id: ID_B, dir: outsideDir, group: GROUP, deletedAt: Date.now() },
+      // dir 是回收站子路径的 ../ 逃逸写法
+      { id: 'session-77777777-7777-4777-8777-777777777777', dir: path.join(auditHome, 'session-trash', '..', 'not-the-trash'), group: GROUP, deletedAt: Date.now() },
+      // group 不是单个路径段 → 会让「还原」写到 sessions 之外
+      { id: ID_GHOST, dir: goodEntryDir, group: '..\\..\\evil', deletedAt: Date.now() },
+      // id 形状非法
+      { id: '../../evil', dir: goodEntryDir, group: GROUP, deletedAt: Date.now() },
+    ],
+  }),
+  'utf8',
+)
+const audited = await auditStore.trashEntries()
+check('登记里 dir 逃出回收站 / group 非单段 / id 形状非法的条目全部被剔除', () => {
+  assert.deepEqual(audited.map((entry) => entry.id), [ID_A], 'only the well-formed entry may survive')
+})
+check('被剔除的坏条目会从 index.json 里清掉', async () => {})
+const rewritten = JSON.parse(await fsp.readFile(path.join(auditHome, 'session-trash', 'index.json'), 'utf8'))
+check('index.json 已被重写为只剩合法条目', () => {
+  assert.equal(rewritten.entries.length, 1)
+  assert.equal(rewritten.entries[0].id, ID_A)
+})
+const outsideFile = path.join(outsideDir, 'precious.txt')
+const auditEmpty = await callHandler(
+  createHandler({ store: auditStore, service: () => undefined, logger: { info() {}, warn() {} } }),
+  'POST',
+  '/empty',
+  {},
+)
+check('清空回收站不会碰到回收站之外的目录', () => {
+  assert.equal(auditEmpty.status, 200)
+  assert.equal(fs.existsSync(outsideFile), true, 'a file outside the trash was deleted')
+  assert.equal(auditEmpty.json.removed, 1)
+})
+await fsp.rm(auditHome, { recursive: true, force: true })
+
+// 摘活会话的安全阀：会话报告有活动时不许摘。
+const activeHome = await makeHome()
+const activeStore = new SessionStore(activeHome)
+const activeCalls = []
+const activeSessions = {
+  store: new Map([[ID_A, { id: ID_A, session: { id: ID_A }, announced: true }]]),
+  get(id) {
+    const entry = this.store.get(id)
+    return entry === undefined ? undefined : entry.session
+  },
+  liveEntryFor(session) {
+    return [...this.store.values()].find((entry) => entry.session === session)
+  },
+  detachEntered(entry) {
+    activeCalls.push(entry.id)
+    this.store.delete(entry.id)
+  },
+}
+const activeService = (name) => (name === 'sessions' ? activeSessions : undefined)
+const skipped = await mod.__internal.forgetLiveSession({
+  service: activeService,
+  id: ID_A,
+  waterfall: async () => [{ kind: 'agent-turn' }],
+})
+check('会话仍在活动时不摘（宁可多留一行，也不抽走正在跑的会话）', () => {
+  assert.equal(skipped.liveSkippedActive, true)
+  assert.equal(skipped.liveDropped, false)
+  assert.deepEqual(activeCalls, [], 'detachEntered must not run for an active session')
+  assert.equal(activeSessions.store.has(ID_A), true)
+})
+const dropped = await mod.__internal.forgetLiveSession({
+  service: activeService,
+  id: ID_A,
+  waterfall: async () => [],
+})
+check('无活动时正常摘除', () => {
+  assert.equal(dropped.liveDropped, true)
+  assert.deepEqual(activeCalls, [ID_A])
+})
+const probeFailed = await mod.__internal.forgetLiveSession({
+  service: (name) =>
+    name === 'sessions'
+      ? {
+          store: new Map([[ID_A, { id: ID_A, session: { id: ID_A }, announced: true }]]),
+          get(id) {
+            return this.store.get(id)?.session
+          },
+          liveEntryFor(session) {
+            return [...this.store.values()].find((entry) => entry.session === session)
+          },
+          detachEntered() {},
+        }
+      : undefined,
+  id: ID_A,
+  waterfall: async () => {
+    throw new Error('waterfall unavailable')
+  },
+})
+check('活动探测本身报错时按「无活动」继续（文件都已经删了，不能因为探测失败留痕）', () => {
+  assert.equal(probeFailed.liveDropped, true)
+})
+await fsp.rm(activeHome, { recursive: true, force: true })
 
 await fsp.rm(home, { recursive: true, force: true })
 console.log(`\n${failures === 0 ? '全部通过' : `${failures} 项失败`}\n`)

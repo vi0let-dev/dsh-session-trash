@@ -101,7 +101,10 @@ async function removeTree(target) {
 /** 读一个 JSON 文件，任何失败都退回 undefined（坏文件不该让整页打不开）。 */
 async function readJsonFile(file) {
   try {
-    return JSON.parse(await fsp.readFile(file, 'utf8'))
+    // 去掉可能存在的 BOM：DSH 自己写文件不带 BOM，但用户用某些编辑器改过之后会带上，
+    // 而 JSON.parse 会直接拒绝——那会表现为「标题全空」「回收站突然空了」这种莫名其妙的现象。
+    const text = (await fsp.readFile(file, 'utf8')).replace(/^\uFEFF/, '')
+    return JSON.parse(text)
   } catch {
     return undefined
   }
@@ -147,6 +150,29 @@ function isLoopback(req) {
     address === '::ffff:127.0.0.1' ||
     address.startsWith('127.')
   )
+}
+
+/** 会话 id 的规范形状；回收站登记里只接受这一种。 */
+const TRASH_ID = /^session-[0-9a-fA-F-]{4,64}$/
+
+/** 分组名必须是单个路径段（不能有分隔符，也不能是 . / ..）。 */
+function isSafeSegment(value) {
+  return (
+    typeof value === 'string' &&
+    value !== '' &&
+    value !== '.' &&
+    value !== '..' &&
+    !value.includes('/') &&
+    !value.includes('\\')
+  )
+}
+
+/** child 是否真的落在 parent 目录里面（用于挡掉登记文件被改坏 / 被人手工编辑后的路径穿越）。 */
+function isInside(parent, child) {
+  const base = path.resolve(parent)
+  const target = path.resolve(child)
+  const rel = path.relative(base, target)
+  return rel !== '' && !rel.startsWith('..') && !path.isAbsolute(rel)
 }
 
 /**
@@ -216,20 +242,25 @@ class SessionStore {
 
   async trashEntries() {
     const index = await readJsonFile(this.trashIndex)
-    const entries = Array.isArray(index?.entries) ? index.entries : []
-    // 目录被人手动删掉时，登记也一并丢掉，避免回收站里留下还原不了的行。
-    const alive = []
-    for (const entry of entries) {
-      if (typeof entry?.id !== 'string' || typeof entry?.dir !== 'string') continue
+    const raw = Array.isArray(index?.entries) ? index.entries : []
+    const entries = []
+    for (const entry of raw) {
+      // 登记文件只应由本插件写入，但它是 $DSH_HOME 下的普通文件（可能被手工编辑、被工具改写、
+      // 被写坏）。所以每一项都当成**不可信输入**校验：id 必须是会话 id 形状、分组必须是单个
+      // 路径段、目录必须真的落在回收站目录里。否则一次「彻底删除」就会 recursive rm 别处，
+      // 一次「还原」就会把文件搬到 sessions 目录之外。
+      if (typeof entry?.id !== 'string' || !TRASH_ID.test(entry.id)) continue
+      if (typeof entry?.dir !== 'string' || !isInside(this.trashRoot, entry.dir)) continue
+      if (entry.group !== undefined && entry.group !== null && !isSafeSegment(entry.group)) continue
       try {
         await fsp.access(entry.dir)
-        alive.push(entry)
+        entries.push(entry)
       } catch {
-        /* 已不存在 */
+        /* 目录已不存在：连同登记一起丢掉 */
       }
     }
-    if (alive.length !== entries.length) await this.writeTrash(alive)
-    return alive
+    if (entries.length !== raw.length) await this.writeTrash(entries)
+    return entries
   }
 
   async writeTrash(entries) {
@@ -260,7 +291,7 @@ class SessionStore {
  * 每个请求都重新解析服务，因为 cordis 的服务可以被替换（例如 profile 重组），
  * 启动时抓一次引用会拿到过期的对象。
  */
-function createHandler({ store, service, logger }) {
+function createHandler({ store, service, logger, waterfall }) {
   return async function handler(req, res) {
     const send = (status, payload) => {
       res.writeHead(status, {
@@ -287,7 +318,8 @@ function createHandler({ store, service, logger }) {
 
       if (method === 'POST' && route === '/delete') return send(200, await deleteSession({ store, service, id }))
       if (method === 'POST' && route === '/restore') return send(200, await restoreSession({ store, service, id }))
-      if (method === 'POST' && route === '/purge') return send(200, await purgeSession({ store, service, id, logger }))
+      if (method === 'POST' && route === '/purge')
+        return send(200, await purgeSession({ store, service, id, logger, waterfall }))
       if (method === 'POST' && route === '/empty') {
         const entries = await store.trashEntries()
         let detachedFrom = 0
@@ -298,7 +330,7 @@ function createHandler({ store, service, logger }) {
           const cleanup = await detachEverywhere({ service, id: entry.id })
           detachedFrom += cleanup.detachedFrom
           if (cleanup.unarchived === true) unarchived++
-          if (forgetLiveSession({ service, id: entry.id, logger }).liveDropped === true) liveDropped++
+          if ((await forgetLiveSession({ service, id: entry.id, logger, waterfall })).liveDropped === true) liveDropped++
         }
         await store.writeTrash([])
         return send(200, { ok: true, removed: entries.length, detachedFrom, unarchived, liveDropped })
@@ -377,8 +409,11 @@ async function detachEverywhere({ service, id }) {
  * 这里用会话表自己的移除原语把这一条摘掉：`liveEntryFor` 取到这条 entry，`detachEntered`
  * 从 store 里删除它（并给已 announce 的会话发出 `session/disposed`）。该原语本身是幂等的——
  * store 里已经不是那条 entry 就直接返回，所以将来持有它的那个 fiber 卸载时再调一次也不会出错。
+ *
+ * 安全阀：先问一次 `workspace/session-activity` 瀑布（与官方归档用的是同一个判据），
+ * 只要还有活动就**不摘**——宁可让那一行多留一会儿，也不在后台把一个正在跑任务的会话从表里抽走。
  */
-function forgetLiveSession({ service, id, logger }) {
+async function forgetLiveSession({ service, id, logger, waterfall }) {
   const sessions = optional(service, 'sessions')
   if (
     !sessions ||
@@ -393,6 +428,18 @@ function forgetLiveSession({ service, id, logger }) {
     if (session === undefined) return { liveDropped: false, liveSupported: true }
     const entry = sessions.liveEntryFor(session)
     if (entry === undefined) return { liveDropped: false, liveSupported: true }
+
+    if (typeof waterfall === 'function') {
+      try {
+        const activity = await waterfall('workspace/session-activity', { sessionId: String(id) }, () => Promise.resolve([]))
+        if (Array.isArray(activity) && activity.length > 0) {
+          return { liveDropped: false, liveSupported: true, liveSkippedActive: true }
+        }
+      } catch (error) {
+        logger?.warn?.(`dsh-session-trash: 活动探测失败，按「无活动」继续: ${error?.message ?? error}`)
+      }
+    }
+
     sessions.detachEntered(entry)
     return { liveDropped: true, liveSupported: true }
   } catch (error) {
@@ -586,10 +633,14 @@ async function restoreSession({ store, service, id }) {
   if (!entry) throw fail(404, '回收站里没有这个会话')
 
   const group = typeof entry.group === 'string' && entry.group !== '' ? entry.group : null
-  if (group === null) {
-    throw fail(409, '这条删除登记缺少原分组信息，无法自动归位')
+  if (group === null || !isSafeSegment(group)) {
+    throw fail(409, '这条删除登记缺少（或含非法）原分组信息，无法自动归位')
   }
   const target = path.join(store.sessionsRoot, group, entry.id)
+  // 纵深防御：即使登记文件被改坏，也绝不让还原写到 sessions 目录之外。
+  if (!isSafeSegment(entry.id) || !isInside(store.sessionsRoot, target)) {
+    throw fail(409, '这条删除登记的目标路径不合法，已拒绝还原')
+  }
   const from = path.join(entry.dir, 'session')
   try {
     await fsp.access(target)
@@ -625,7 +676,7 @@ async function restoreSession({ store, service, id }) {
  *   3. 如果它在宿主会话表里还活着，把它从表里摘掉——这一步是「重启才消失」的那个残留的解药。
  * 之后浏览器半身会调 `sessions.refresh()` 重新拉一次清单。
  */
-async function purgeSession({ store, service, id, logger }) {
+async function purgeSession({ store, service, id, logger, waterfall }) {
   const entries = await store.trashEntries()
   const key = String(id).replace(/^session-/, '')
   const entry = entries.find((item) => String(item.id).replace(/^session-/, '') === key)
@@ -633,7 +684,7 @@ async function purgeSession({ store, service, id, logger }) {
   await removeTree(entry.dir)
   await store.dropTrash(entry.id)
   const cleanup = await detachEverywhere({ service, id: entry.id })
-  const live = forgetLiveSession({ service, id: entry.id, logger })
+  const live = await forgetLiveSession({ service, id: entry.id, logger, waterfall })
   return { ok: true, id: entry.id, purged: true, ...cleanup, ...live }
 }
 
@@ -657,7 +708,11 @@ export function apply(ctx, config = {}) {
     logger?.warn?.(`dsh-session-trash: 无法创建回收站目录 ${store.trashRoot}: ${error?.message ?? error}`)
   }
 
-  const handler = createHandler({ store, service, logger })
+  // 与官方归档同源的「这个会话还在活动吗」判据，用于给摘活会话加安全阀。
+  const waterfall =
+    typeof ctx?.waterfall === 'function' ? (event, payload, fallback) => ctx.waterfall(event, payload, fallback) : undefined
+
+  const handler = createHandler({ store, service, logger, waterfall })
 
   // webServer 由浏览器组合晚于本插件发布，用 ctx.inject 等它就位（并在被替换后重挂）。
   ctx.inject(['webServer'], (scoped) => {

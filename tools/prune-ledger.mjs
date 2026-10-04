@@ -74,13 +74,34 @@ if (APPLY) {
 const raw = fs.readFileSync(WORKSPACE_FILE, 'utf8')
 let ledger
 try {
-  ledger = JSON.parse(raw)
+  // 容忍 BOM：DSH 自己不写 BOM，但用某些编辑器改过之后会带上，JSON.parse 会直接拒绝。
+  ledger = JSON.parse(raw.replace(/^\uFEFF/, ''))
 } catch (error) {
   console.error(`workspace.json 解析失败：${error.message}`)
   process.exit(1)
 }
 
+// 账本结构不对就停手：下面的「残留」判定完全建立在能读到 tables.workspaces 之上，
+// 结构意外时宁可什么都不做，也不要按错误的形状去改一份正在用的账本。
+if (ledger === null || typeof ledger !== 'object' || ledger.tables === null || typeof ledger.tables !== 'object') {
+  console.error(`${WORKSPACE_FILE} 里没有预期的 tables 结构（可能是别的版本或已被改写）。为避免误删，已停止。`)
+  process.exit(1)
+}
+
 const onDisk = idsOnDisk()
+
+// 关键安全阀：磁盘上一个会话目录都没有时，「所有账本 id 都是残留」这个推论几乎肯定是错的
+// （DSH_HOME 指错、sessions 被移动/改名、或权限读不到）。这种情况下拒绝运行。
+if (onDisk.size === 0 && !process.argv.includes('--force')) {
+  console.error(
+    `在 ${SESSIONS_ROOT} 下一个会话目录都没找到。\n` +
+      '如果就这样继续，账本里**每一个** id 都会被判定为残留并被移除——这几乎一定是 DSH_HOME 指错、\n' +
+      '目录被移动过、或当前账户读不到它，而不是真的全都删光了。\n' +
+      '请先确认路径；确实要在这个状态下继续，加 --force 明确承担。',
+  )
+  process.exit(1)
+}
+
 log(`DSH_HOME        : ${HOME}`)
 log(`磁盘上的会话    : ${onDisk.size} 个`)
 log(`模式            : ${APPLY ? 'APPLY（会写入）' : 'dry-run（不动文件）'}`)
