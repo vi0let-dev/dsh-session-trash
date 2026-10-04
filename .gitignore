@@ -8,6 +8,10 @@ node_modules/
 .tmp/
 docs/screenshot-local/
 
+# 未压缩的 banner 源图：README 引用的是 docs/banner.webp，这张 1.9 MB 的原图不入库。
+# 想换 banner 就在本地替换它、重新导出 webp，别直接 add 进来。
+docs/banner.png
+
 # Editors & OS
 .DS_Store
 Thumbs.db

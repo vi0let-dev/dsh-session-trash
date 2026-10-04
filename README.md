@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/banner.webp" alt="DSH Session Trash — 给 DeepSeek Harness 补上会话删除" width="100%">
+</p>
+
 # dsh-session-trash
 
 给 DeepSeek Harness（`dsh`）补上**真正删除会话**的能力。
