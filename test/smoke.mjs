@@ -938,6 +938,42 @@ check('apply() 注册出来的 handler 真的能应答', () => {
 })
 await fsp.rm(mountHome, { recursive: true, force: true })
 
+console.log('\n[10] 发布一致性 / packaging must stay self-consistent')
+// 这三处名字必须完全一致，否则浏览器半身根本挂不上（它只绑定「说明符恰为包名」的那一行 Loader）。
+// 改包名（例如 npm 上重名）时最容易漏掉，所以放进测试。
+const pkg = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8'))
+const patchText = fs.readFileSync(path.join(ROOT, 'cordis.patch.yml'), 'utf8')
+check('package.json name = cordis.patch.yml 行 name = client bundle id', () => {
+  assert.equal(typeof pkg.name, 'string')
+  assert.equal(clientExports.name, pkg.name, 'host half export name must equal the package name')
+  assert.equal(bundle.id, pkg.name, 'client bundle id must equal the package name')
+  assert.ok(
+    new RegExp(`name:\\s*'${pkg.name}'`).test(patchText),
+    `cordis.patch.yml must insert a row named exactly "${pkg.name}"`,
+  )
+})
+check('入口/清单/图标都存在，且声明指向真实文件', () => {
+  assert.equal(pkg.main, './index.js')
+  for (const file of ['index.js', 'client.js', 'cordis.patch.yml', 'icon.svg', 'README.md', 'LICENSE']) {
+    assert.ok(fs.existsSync(path.join(ROOT, file)), `missing ${file}`)
+  }
+  assert.equal(pkg.exports['./client'], './client.js')
+  assert.equal(pkg.dsh.bundle.patch, './cordis.patch.yml')
+  assert.equal(pkg.dsh.client.platform, 'web')
+})
+check('files 覆盖了运行期真正需要的文件', () => {
+  for (const file of ['index.js', 'client.js', 'cordis.patch.yml', 'icon.svg']) {
+    assert.ok(pkg.files.includes(file), `files[] must ship ${file}`)
+  }
+})
+check('没有构建步骤（GitHub 直装不会被 allowBuilds 拦下）', () => {
+  const scripts = pkg.scripts ?? {}
+  for (const hook of ['prepare', 'prepublishOnly', 'prepack', 'postinstall']) {
+    assert.equal(scripts[hook], undefined, `${hook} would make pnpm gate the install`)
+  }
+  assert.equal(pkg.private, undefined, 'private:true would block npm publish')
+})
+
 await fsp.rm(home, { recursive: true, force: true })
 console.log(`\n${failures === 0 ? '全部通过' : `${failures} 项失败`}\n`)
 process.exit(failures === 0 ? 0 : 1)

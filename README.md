@@ -232,7 +232,10 @@ node test/smoke.mjs
 确认框跟随主题（不出现写死的暗色蒙层）、两种渲染分支（空态 / 有数据），以及**删除确认流程 + 外壳刷新**
 （源码里不存在原生对话框调用；点「删除」不发请求；确认后才 `POST /delete`；取消不发请求；
 确认后确实调到了 `sessions.refresh()`；彻底删除后若探针仍发现它活着，会给出「刷新界面」按钮）。
-当前 81 项全过（`npm test` 同一条命令）。
+当前 85 项全过（`npm test` 同一条命令）。最后四条专门盯着**发布一致性**：`package.json` 的 `name`、
+`cordis.patch.yml` 里那一行的 `name`、`client.js` 的 bundle `id` 三者必须一致，入口/清单/图标必须真实存在，
+`files` 必须覆盖运行期文件，且不能有 `prepare`/`postinstall` 之类的构建钩子（否则 GitHub 直装会被 pnpm
+的 `allowBuilds` 拦下）。改包名时这四条会立刻告诉你漏了哪一处。
 
 ## 发布 / 维护者清单
 
