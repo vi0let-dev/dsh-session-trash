@@ -289,36 +289,40 @@ git push --tags
 
 推送之后，别人就能用界面里的「添加插件」填 **`github:vi0let-dev/dsh-session-trash`** 直接装。
 
-### （可选）发布到 npm，让「包名安装」也成立
+### （可选）放一张界面截图
 
-```powershell
-npm publish
-```
+README 顶部预留了图片位置，按下面四步就能填上：
 
-本仓库的 `package.json` 没有 `prepare`/`prepublishOnly` 之类的脚本，也不是 `private`，
-可以直接发布。
-**如果 `dsh-session-trash` 在 npm 上已被占用**，就得改名——注意改名要**同时**改三处，
-否则浏览器半身不会挂载：
+1. **截图**：打开 **设置 → 会话回收站**，把窗口截下来——
+   - Windows：`Win` + `Shift` + `S` 框选（进剪贴板），或 `Win` + `PrtSc`（整屏，自动存到
+     `图片\屏幕截图`）；
+   - macOS：`Shift` + `Cmd` + `4` 框选（桌面生成 PNG）。
 
-- `package.json` 的 `name`
-- `cordis.patch.yml` 里那一行的 `name`（必须是和包名完全一致的裸包名）
-- `client.js` 里 `__ModuleLoader__.load({ id: ... })` 的 `id`
+   建议先把窗口调到能一屏看全列表，并选好你想展示的浅色/深色主题。
 
-（这三条已经写成自测了，改错会直接测试失败。）
+2. **放到 `docs/screenshot.png`**（文件名要对得上，否则第 3 步的路径也要跟着改）：
 
-### （可选）放一张截图
+   ```powershell
+   mkdir docs
+   # 把你截好的图另存 / 复制为 docs\screenshot.png
+   ```
 
-存成 `docs/screenshot.png`，然后把下面这行的注释去掉：
+3. **打开 README，把这一行的注释符去掉**（`<!--` 和 `-->` 一起删掉即可）：
 
-```markdown
-<!-- ![设置 → 会话回收站](docs/screenshot.png) -->
-```
+   ```markdown
+   <!-- ![设置 → 会话回收站](docs/screenshot.png) -->
+   ```
 
-### （可选）让社区目录收录
+4. **提交**：
 
-给仓库打上 `dsh-plugin` topic，必要时再往
-[awesome-dsh-plugin](https://github.com/awesome-dsh-plugin/awesome-dsh-plugin)、
-[dshbase](https://dshbase.com/) 提收录。
+   ```powershell
+   git add docs/screenshot.png README.md
+   git commit -m "README: 加上界面截图"
+   git push
+   ```
+
+> ⚠️ 截图会公开，**别把真实会话标题、工作目录、用户名、会话 id 截进去**。
+> 拿一个演示用的空白会话、或干脆只截「回收站为空」那部分最省事。
 
 ### 版本兼容性说明（改 DSH 版本后请更新）
 
