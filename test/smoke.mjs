@@ -973,6 +973,22 @@ check('没有构建步骤（GitHub 直装不会被 allowBuilds 拦下）', () =>
   }
   assert.equal(pkg.private, undefined, 'private:true would block npm publish')
 })
+check('发布元信息里没有占位符，且指向真实仓库形状', () => {
+  const urls = [pkg.repository?.url, pkg.homepage, pkg.bugs?.url].filter((value) => typeof value === 'string')
+  assert.equal(urls.length, 3, 'repository/homepage/bugs must all be set')
+  for (const url of urls) {
+    assert.ok(!/OWNER|<[^>]*>/i.test(url), `placeholder left in ${url}`)
+    assert.ok(url.includes('github.com/'), `${url} should point at GitHub`)
+    assert.ok(url.includes(`/${pkg.name}`), `${url} should name the package repo`)
+  }
+  assert.equal(pkg.version, '1.0.0')
+  assert.equal(pkg.license, 'MIT')
+})
+check('README 里没有遗留占位符', () => {
+  const readme = fs.readFileSync(path.join(ROOT, 'README.md'), 'utf8')
+  assert.ok(!readme.includes('OWNER'), 'README still contains the OWNER placeholder')
+  assert.ok(readme.includes(pkg.name), 'README should name the package')
+})
 
 console.log('\n[11] 审计加固 / hardening from the pre-publish audit')
 // 回收站登记文件是 $DSH_HOME 下的普通文件（可能被手工编辑、被其它工具改写、被写坏），

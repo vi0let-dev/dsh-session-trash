@@ -46,11 +46,11 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/OWNER/dsh-session-trash.git"
+    "url": "git+https://github.com/vi0let-dev/dsh-session-trash.git"
   },
-  "homepage": "https://github.com/OWNER/dsh-session-trash#readme",
+  "homepage": "https://github.com/vi0let-dev/dsh-session-trash#readme",
   "bugs": {
-    "url": "https://github.com/OWNER/dsh-session-trash/issues"
+    "url": "https://github.com/vi0let-dev/dsh-session-trash/issues"
   },
   "license": "MIT"
 }

@@ -34,7 +34,7 @@ Harness 官方的「归档」只把会话移出侧栏，磁盘上的日志会一
 | 输入框里填什么 | 例子 | 前提 |
 | --- | --- | --- |
 | **包名** | `dsh-session-trash` | 该包已发布到 npm（或你配置的镜像源） |
-| **GitHub 仓库地址** | `github:OWNER/dsh-session-trash` | 只要有仓库就能装，不需要发布 npm |
+| **GitHub 仓库地址** | `github:vi0let-dev/dsh-session-trash` | 只要有仓库就能装，不需要发布 npm |
 | **本地目录路径** | `D:\src\dsh-session-trash` | 目录里就是本仓库的内容 |
 | **压缩包** | `D:\downloads\dsh-session-trash-1.0.0.tgz` | `npm pack` 的产物 |
 
@@ -43,13 +43,13 @@ Harness 官方的「归档」只把会话移出侧栏，磁盘上的日志会一
 安装完成后对话框会给出 **「立即启用」**：点它会启用这个组合包、关闭对话框并把列表滚动到它；
 直接关掉则它保持「已安装但未启用」。启用后重启 DSH 即可。
 
-> 想锁定版本更稳：Git 地址可以带 commit，例如 `github:OWNER/dsh-session-trash#<commit-sha>`。
+> 想锁定版本更稳：Git 地址可以带 commit，例如 `github:vi0let-dev/dsh-session-trash#<commit-sha>`。
 
 ### 方式二：命令行
 
 ```powershell
 # GitHub 直装（推荐）
-dsh plugin --profile desktop add github:OWNER/dsh-session-trash
+dsh plugin --profile desktop add github:vi0let-dev/dsh-session-trash
 
 # 本地目录
 dsh plugin --profile desktop add "D:\src\dsh-session-trash"
@@ -257,57 +257,68 @@ node test/smoke.mjs
 确认框跟随主题（不出现写死的暗色蒙层）、两种渲染分支（空态 / 有数据），以及**删除确认流程 + 外壳刷新**
 （源码里不存在原生对话框调用；点「删除」不发请求；确认后才 `POST /delete`；取消不发请求；
 确认后确实调到了 `sessions.refresh()`；彻底删除后若探针仍发现它活着，会给出「刷新界面」按钮）。
-当前 92 项全过（`npm test` 同一条命令）。最后四条专门盯着**发布一致性**：`package.json` 的 `name`、
+当前 94 项全过（`npm test` 同一条命令）。最后六条专门盯着**发布一致性**：`package.json` 的 `name`、
 `cordis.patch.yml` 里那一行的 `name`、`client.js` 的 bundle `id` 三者必须一致，入口/清单/图标必须真实存在，
-`files` 必须覆盖运行期文件，且不能有 `prepare`/`postinstall` 之类的构建钩子（否则 GitHub 直装会被 pnpm
-的 `allowBuilds` 拦下）。改包名时这四条会立刻告诉你漏了哪一处。
+`files` 必须覆盖运行期文件，不能有 `prepare`/`postinstall` 之类的构建钩子（否则 GitHub 直装会被 pnpm
+的 `allowBuilds` 拦下），`repository`/`homepage`/`bugs` 必须已填且不含占位符。改名或换仓库地址时，
+这几条会立刻告诉你漏了哪一处。
 
-## 发布 / 维护者清单
+## 维护者清单
 
-想把它传到自己 GitHub（并让「包名安装」也可用）时，按下面走一遍：
+本仓库当前挂在 **[@vi0let-dev](https://github.com/vi0let-dev)** 名下。如果你是 fork 后自己发布，
+把 `vi0let-dev` 换成你的用户名（`package.json` 的 `repository` / `homepage` / `bugs` 三处，
+以及本 README 里所有 `github:vi0let-dev/dsh-session-trash` 示例）：
 
-1. **替换 `OWNER`**：`package.json` 里的 `repository` / `homepage` / `bugs` 三处、以及本 README 里的
-   `github:OWNER/dsh-session-trash` 示例，换成你的 GitHub 用户名。
-2. **推送仓库**：
+```powershell
+# 先看一眼还有几处（应为 0 才说明都换干净了）
+git grep -n "vi0let-dev"
+```
 
-   ```powershell
-   git init
-   git add .
-   git commit -m "dsh-session-trash 1.0.0"
-   git branch -M main
-   git remote add origin https://github.com/OWNER/dsh-session-trash.git
-   git push -u origin main
+### 推送到 GitHub
 
-   # 可选：打个 tag，方便别人锁定版本安装（github:OWNER/dsh-session-trash#v1.0.0）
-   git tag v1.0.0
-   git push --tags
-   ```
+```powershell
+git remote add origin https://github.com/vi0let-dev/dsh-session-trash.git
+git push -u origin main
 
-   之后别人就能用界面里的「添加插件」填 **`github:OWNER/dsh-session-trash`** 直接装。
-3. **（可选）发布到 npm**，这样「包名安装」才成立：
+# 可选：打个 tag，方便别人锁定版本安装（github:vi0let-dev/dsh-session-trash#v1.0.0）
+git tag v1.0.0
+git push --tags
+```
 
-   ```powershell
-   npm publish
-   ```
+仓库要**建成空的**——不要勾选「Add a README / .gitignore / license」，否则推送会因为远端已有提交而冲突。
 
-   本仓库的 `package.json` 没有 `prepare`/`prepublishOnly` 之类的脚本，也不是 `private`，
-   可以直接发布。
-   **如果 `dsh-session-trash` 在 npm 上已被占用**，就得改名——注意改名要**同时**改三处，
-   否则浏览器半身不会挂载：
+推送之后，别人就能用界面里的「添加插件」填 **`github:vi0let-dev/dsh-session-trash`** 直接装。
 
-   - `package.json` 的 `name`
-   - `cordis.patch.yml` 里那一行的 `name`（必须与包名完全一致的裸包名）
-   - `client.js` 里 `__ModuleLoader__.load({ id: ... })` 的 `id`
+### （可选）发布到 npm，让「包名安装」也成立
 
-4. **（可选）放一张截图**：存成 `docs/screenshot.png`，然后把下面这行的注释去掉。
+```powershell
+npm publish
+```
 
-   ```markdown
-   <!-- ![设置 → 会话回收站](docs/screenshot.png) -->
-   ```
+本仓库的 `package.json` 没有 `prepare`/`prepublishOnly` 之类的脚本，也不是 `private`，
+可以直接发布。
+**如果 `dsh-session-trash` 在 npm 上已被占用**，就得改名——注意改名要**同时**改三处，
+否则浏览器半身不会挂载：
 
-5. **（可选）让社区目录收录**：给仓库打上 `dsh-plugin` topic，必要时再往
-   [awesome-dsh-plugin](https://github.com/awesome-dsh-plugin/awesome-dsh-plugin)、
-   [dshbase](https://dshbase.com/) 提收录。
+- `package.json` 的 `name`
+- `cordis.patch.yml` 里那一行的 `name`（必须是和包名完全一致的裸包名）
+- `client.js` 里 `__ModuleLoader__.load({ id: ... })` 的 `id`
+
+（这三条已经写成自测了，改错会直接测试失败。）
+
+### （可选）放一张截图
+
+存成 `docs/screenshot.png`，然后把下面这行的注释去掉：
+
+```markdown
+<!-- ![设置 → 会话回收站](docs/screenshot.png) -->
+```
+
+### （可选）让社区目录收录
+
+给仓库打上 `dsh-plugin` topic，必要时再往
+[awesome-dsh-plugin](https://github.com/awesome-dsh-plugin/awesome-dsh-plugin)、
+[dshbase](https://dshbase.com/) 提收录。
 
 ### 版本兼容性说明（改 DSH 版本后请更新）
 
