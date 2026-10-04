@@ -86,12 +86,17 @@ function makeRegistry({ busyId, archived = [], workspaces = [] } = {}) {
 }
 
 /** Minimal HTTP request/response doubles. */
-async function callHandler(handler, method, route, body, remoteAddress = '127.0.0.1') {
+async function callHandler(handler, method, route, body, options = {}) {
+  const { remoteAddress = '127.0.0.1', host = '127.0.0.1:19387', clientHeader = '1' } = options
   const payload = body === undefined ? '' : JSON.stringify(body)
   const req = Readable.from(payload === '' ? [] : [Buffer.from(payload)])
   req.method = method
   req.url = `/api/dsh-session-trash${route}`
   req.socket = { remoteAddress }
+  req.headers = {}
+  // null（而不是 undefined）才表示「这个头就不发」——undefined 会落回上面的默认值。
+  if (host !== null) req.headers.host = host
+  if (clientHeader !== null) req.headers['x-dsh-session-trash'] = clientHeader
   const captured = { status: 0, headers: undefined, body: '' }
   const res = {
     writeHead(status, headers) {
@@ -148,7 +153,7 @@ check('GET /list → 200 with sessions', () => {
   assert.equal(listResponse.status, 200)
   assert.equal(listResponse.json.sessions.length, 2)
 })
-const fenced = await callHandler(handler, 'GET', '/list', undefined, '10.0.0.5')
+const fenced = await callHandler(handler, 'GET', '/list', undefined, { remoteAddress: '10.0.0.5' })
 check('非回环连接 → 403', () => assert.equal(fenced.status, 403))
 const badId = await callHandler(handler, 'POST', '/delete', { id: '../../etc' })
 check('路径穿越的 id → 400', () => {
@@ -782,7 +787,12 @@ function findByText(element, text) {
 // ① 点「删除」只打开确认框，绝不立刻发请求。
 const fetches = []
 globalThis.fetch = async (url, options) => {
-  fetches.push({ url: String(url), method: options?.method ?? 'GET', body: options?.body })
+  fetches.push({
+    url: String(url),
+    method: options?.method ?? 'GET',
+    body: options?.body,
+    headers: options?.headers ?? {},
+  })
   return { ok: true, status: 200, text: async () => JSON.stringify({ ok: true, id: ID_A, sessions: [], trash: [] }) }
 }
 const loadedElement = renderWith({ data: LISTING, loading: false })
@@ -820,6 +830,18 @@ check('确认后发出 POST /delete，body 带会话 id', () => {
   assert.equal(hit.method, 'POST')
   assert.equal(hit.body, JSON.stringify({ id: ID_A }))
   assert.ok(fetches.some((call) => call.url.includes('/list')), 'should refresh the listing afterwards')
+})
+check('每个请求都带上后端的标志头（GET 与 POST 都要）', () => {
+  assert.ok(fetches.length > 0, 'no requests captured')
+  for (const call of fetches) {
+    assert.equal(
+      call.headers['x-dsh-session-trash'],
+      '1',
+      `${call.method} ${call.url} is missing the x-dsh-session-trash header`,
+    )
+  }
+  const post = fetches.find((call) => call.method === 'POST')
+  assert.equal(post.headers['content-type'], 'application/json', 'POST must keep its JSON content type')
 })
 
 // ③ 动作成功后必须让外壳重新拉一次会话清单——否则侧栏会继续显示那条已被摘掉的缓存行。
@@ -981,7 +1003,7 @@ check('发布元信息里没有占位符，且指向真实仓库形状', () => {
     assert.ok(url.includes('github.com/'), `${url} should point at GitHub`)
     assert.ok(url.includes(`/${pkg.name}`), `${url} should name the package repo`)
   }
-  assert.equal(pkg.version, '1.0.0')
+  assert.ok(/^\d+\.\d+\.\d+$/.test(pkg.version), `version must be semver, got ${pkg.version}`)
   assert.equal(pkg.license, 'MIT')
 })
 check('README 里没有遗留占位符', () => {
@@ -1107,6 +1129,60 @@ check('活动探测本身报错时按「无活动」继续（文件都已经删�
   assert.equal(probeFailed.liveDropped, true)
 })
 await fsp.rm(activeHome, { recursive: true, force: true })
+
+console.log('\n[12] 跨站防护 / CSRF + DNS-rebinding fence')
+// 只校验回环是不够的：浏览器里的任意网页都能向 http://127.0.0.1:<port> 发简单 POST
+// （CORS 只挡读响应，不挡副作用），而 /purge 不可恢复。所以要求自定义标志头 + 回环 Host。
+const fenceHome = await makeHome()
+const fenceStore = new SessionStore(fenceHome)
+const fenceHandler = createHandler({ store: fenceStore, service: () => undefined, logger: { info() {}, warn() {} } })
+
+// 先正常删一个，让回收站里有东西——用来证明被挡下的请求确实没有产生副作用。
+const setup = await callHandler(fenceHandler, 'POST', '/delete', { id: ID_A })
+check('带标志头 + 回环 Host 的正常请求照常工作', () => assert.equal(setup.status, 200))
+const trashDirCount = () => fs.readdirSync(path.join(fenceHome, 'session-trash')).filter((name) => name !== 'index.json').length
+const trashBefore = trashDirCount()
+check('回收站里确实多了一个条目（对照基线）', () => assert.equal(trashBefore, 1))
+
+// ① 缺标志头（跨站简单请求就长这样）
+const noHeader = await callHandler(fenceHandler, 'POST', '/purge', { id: ID_A }, { clientHeader: null })
+check('缺标志头的 POST /purge → 403', () => {
+  assert.equal(noHeader.status, 403)
+  assert.ok(String(noHeader.json.error).includes('x-dsh-session-trash'), 'error should name the missing header')
+})
+// ② 标志头值不对
+const wrongHeader = await callHandler(fenceHandler, 'POST', '/purge', { id: ID_A }, { clientHeader: 'yes' })
+check('标志头值不对 → 403', () => assert.equal(wrongHeader.status, 403))
+// ③ 以上两次被挡下的请求都不能产生副作用
+check('被挡下的请求没有删除任何东西', () => {
+  assert.equal(trashDirCount(), trashBefore, 'a blocked request still mutated the trash')
+})
+// ④ GET 也一样要过闸（读取同样不该给跨站页面）
+const listNoHeader = await callHandler(fenceHandler, 'GET', '/list', undefined, { clientHeader: null })
+check('缺标志头的 GET /list → 403', () => assert.equal(listNoHeader.status, 403))
+// ⑤ DNS rebinding：页面源是攻击者域名，自定义头也不触发预检，此时只能靠 Host 挡
+for (const host of ['evil.example:19387', 'evil.example', '192.168.1.9:19387', '', null]) {
+  const rebound = await callHandler(fenceHandler, 'POST', '/delete', { id: ID_B }, { host })
+  check(`Host=${JSON.stringify(host)} → 403（挡 DNS rebinding）`, () => {
+    assert.equal(rebound.status, 403)
+    assert.ok(String(rebound.json.error).includes('127.0.0.1'), 'error should tell the user which host to use')
+  })
+}
+// ⑥ 合法的回环 Host 写法都要放行
+for (const host of ['127.0.0.1:19387', '127.0.0.1', 'localhost:19387', 'LOCALHOST:5173', '[::1]:19387', '127.0.0.1:1']) {
+  const allowed = await callHandler(fenceHandler, 'GET', '/list', undefined, { host })
+  check(`Host=${host} → 放行`, () => assert.equal(allowed.status, 200))
+}
+// ⑦ 直接单测闸门本身（不经过路由），把边界钉死
+const fenceProbe = mod.__internal.requestFence
+check('requestFence 的判定与路由一致', () => {
+  assert.equal(fenceProbe({ headers: { host: '127.0.0.1:1', 'x-dsh-session-trash': '1' } }), undefined)
+  assert.equal(typeof fenceProbe({ headers: { host: 'localhost', 'x-dsh-session-trash': '1' } }), 'undefined')
+  assert.ok(fenceProbe({ headers: { host: 'example.com', 'x-dsh-session-trash': '1' } }))
+  assert.ok(fenceProbe({ headers: { host: '127.0.0.1:1' } }))
+  assert.ok(fenceProbe({ headers: {} }))
+})
+await fsp.rm(fenceHome, { recursive: true, force: true })
 
 await fsp.rm(home, { recursive: true, force: true })
 console.log(`\n${failures === 0 ? '全部通过' : `${failures} 项失败`}\n`)

@@ -108,10 +108,19 @@ window.__ModuleLoader__.load({
     }
 
     // ── 同源 API ─────────────────────────────────────────────────────────────
+    /**
+     * 后端要求这个标志头：跨站请求带不了自定义头（会先触发 CORS 预检，而后端不回应预检），
+     * 于是「随便一个网页偷偷 POST 到 127.0.0.1 触发彻底删除」这条路径被堵死。
+     */
+    const CLIENT_HEADERS = { 'x-dsh-session-trash': '1' }
+
     async function api(pathname, body) {
       const response = await fetch(`${API}${pathname}`, {
         method: body === undefined ? 'GET' : 'POST',
-        headers: body === undefined ? undefined : { 'content-type': 'application/json' },
+        headers:
+          body === undefined
+            ? { ...CLIENT_HEADERS }
+            : { ...CLIENT_HEADERS, 'content-type': 'application/json' },
         body: body === undefined ? undefined : JSON.stringify(body),
         cache: 'no-store',
       })

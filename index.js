@@ -47,6 +47,25 @@ const SESSION_LOG = /^session\..*\.jsonl(\.zstd)?$/
 /** 一次 POST body 的上限，防止畸形请求把内存吃满。 */
 const MAX_BODY = 64 * 1024
 
+/**
+ * 客户端标志头。
+ *
+ * 只校验「来自回环」是不够的：浏览器里的**任意网页**都能向 `http://127.0.0.1:<port>` 发一个
+ * 简单 POST（CORS 只挡读响应，不挡副作用），而这个插件的 `/purge` 是不可恢复的。
+ * 跨站请求想带自定义请求头，必须先发 CORS 预检——本服务从不回应预检，于是请求根本发不出去。
+ */
+const CLIENT_HEADER = 'x-dsh-session-trash'
+const CLIENT_HEADER_VALUE = '1'
+
+/**
+ * Host 必须是回环字面量。
+ *
+ * 这是挡 **DNS rebinding** 的那一道：攻击者把自己的域名解析到 127.0.0.1 后，页面源就是他自己的
+ * 域名，对 `http://evil.example:19387/api/...` 的请求是**同源**的——自定义头也不会触发预检。
+ * 此时 Host 头是 `evil.example:19387` 而不是回环字面量，于是被这里挡下。
+ */
+const LOOPBACK_HOST = /^(?:127(?:\.\d{1,3}){3}|localhost|\[::1\])(?::\d{1,5})?$/i
+
 /** DSH_HOME：环境变量优先（桌面端与 CLI 都用它），否则退回 `~/.dsh`。 */
 function resolveHome() {
   const fromEnv = process.env.DSH_HOME
@@ -150,6 +169,24 @@ function isLoopback(req) {
     address === '::ffff:127.0.0.1' ||
     address.startsWith('127.')
   )
+}
+
+/**
+ * 第二、三道闸（回环之后）：Host 必须是回环字面量，且必须带本插件的标志头。
+ * 通过返回 undefined；不通过返回一句给人看的原因。
+ */
+function requestFence(req) {
+  const host = String(req?.headers?.host ?? '').trim()
+  if (!LOOPBACK_HOST.test(host)) {
+    return (
+      `仅接受来自 127.0.0.1 / localhost 的请求（Host: ${host === '' ? '(缺失)' : host}）。` +
+      '如果你是通过自定义域名访问界面的，请改用 http://127.0.0.1:<端口>。'
+    )
+  }
+  if (String(req?.headers?.[CLIENT_HEADER] ?? '') !== CLIENT_HEADER_VALUE) {
+    return `缺少 ${CLIENT_HEADER} 请求头：本路由拒绝来自其它页面的跨站请求。`
+  }
+  return undefined
 }
 
 /** 会话 id 的规范形状；回收站登记里只接受这一种。 */
@@ -302,6 +339,8 @@ function createHandler({ store, service, logger, waterfall }) {
     }
 
     if (!isLoopback(req)) return send(403, { error: '仅允许本机访问' })
+    const fence = requestFence(req)
+    if (fence !== undefined) return send(403, { error: fence })
 
     const url = new URL(req.url ?? '/', 'http://localhost')
     const route = url.pathname.slice(ROUTE_PREFIX.length).replace(/\/+$/, '') || '/'
@@ -727,4 +766,4 @@ export function apply(ctx, config = {}) {
 }
 
 /** 供测试使用的内部句柄。 */
-export const __internal = { SessionStore, createHandler, buildListing, deleteSession, restoreSession, purgeSession, detachEverywhere, forgetLiveSession, ROUTE_PREFIX, SESSION_LOG }
+export const __internal = { SessionStore, createHandler, buildListing, deleteSession, restoreSession, purgeSession, detachEverywhere, forgetLiveSession, requestFence, ROUTE_PREFIX, SESSION_LOG, CLIENT_HEADER, CLIENT_HEADER_VALUE }

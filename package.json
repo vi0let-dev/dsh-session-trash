@@ -1,6 +1,6 @@
 {
   "name": "dsh-session-trash",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "type": "module",
   "description": "会话回收站：给 DeepSeek Harness 补上「删除会话」——设置页列出全部会话，删除先进回收站（可还原），彻底删除会把日志、工作区记账、归档标记与宿主会话表里的活会话一起清干净。",
   "main": "./index.js",
